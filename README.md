@@ -411,9 +411,9 @@ hdfs dfs -cat /stock/output/part-r-00000
 
 ## 三、程序运行结果说明
 
-![image-20251019163249931](C:\Users\faye\AppData\Roaming\Typora\typora-user-images\image-20251019163249931.png)
 
-![image-20251019165211704](C:\Users\faye\AppData\Roaming\Typora\typora-user-images\image-20251019165211704.png)
+<img width="1293" height="779" alt="image" src="https://github.com/user-attachments/assets/3443204d-8316-4ff7-a9cd-9482b19a9a98" />
+<img width="936" height="300" alt="image" src="https://github.com/user-attachments/assets/488139fe-d544-43a0-9013-dae15094e871" />
 
 
 
