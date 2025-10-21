@@ -18,7 +18,252 @@
 
 ### 1.2 MapReduce设计方案
 
-#### **Map阶段设计**
+#### 伪代码
+
+##### 一、主函数流程
+
+```
+FUNCTION main(args):
+    // 1. 检查参数
+    IF args.length < 3 THEN
+        输出使用说明
+        退出程序
+    END IF
+    
+    // 2. 创建配置和作业
+    创建 Hadoop 配置对象 conf
+    创建作业 job，命名为 "Stock Word Count"
+    
+    // 3. 设置作业参数
+    设置 jar 类为 StockWordCount.class
+    设置 Mapper 类为 TokenizerMapper.class
+    设置 Reducer 类为 IntSumReducer.class
+    设置输出键类型为 Text
+    设置输出值类型为 IntWritable
+    
+    // 4. 配置输入输出路径
+    设置输入路径为 args[0]  // CSV文件路径
+    添加分布式缓存文件 args[1]  // 停词文件
+    设置输出路径为 args[2]  // 输出目录
+    
+    // 5. 提交作业并等待完成
+    提交作业并等待完成
+    根据完成状态退出程序
+END FUNCTION
+```
+
+------
+
+##### 二、Mapper 阶段
+
+###### 2.1 初始化阶段
+
+```
+FUNCTION setup(context):
+    // 加载停词表
+    创建空的停词集合 stopWords (HashSet)
+    
+    TRY:
+        // 从分布式缓存读取停词文件
+        获取缓存文件列表 cacheFiles
+        
+        IF cacheFiles 不为空 THEN
+            获取文件系统 fs
+            打开停词文件路径
+            创建 BufferedReader 读取文件
+            
+            // 逐行读取停词并加入集合
+            WHILE 有下一行 line DO
+                去除首尾空格并转为小写
+                将 line 添加到 stopWords
+            END WHILE
+            
+            关闭文件读取器
+        END IF
+        
+    CATCH IOException e:
+        输出错误信息
+    END TRY
+END FUNCTION
+```
+
+###### 2.2 映射阶段（map）
+
+```
+FUNCTION map(key, value, context):
+    // 1. 跳过 CSV 表头
+    IF key == 0 THEN
+        RETURN  // 第一行是表头，跳过
+    END IF
+    
+    // 2. 解析 CSV 行
+    line = value.toString()
+    找到最后一个逗号的位置 lastCommaIndex
+    
+    IF lastCommaIndex == -1 THEN
+        RETURN  // 格式错误，跳过
+    END IF
+    
+    // 3. 提取文本和情感标签
+    text = line.substring(0, lastCommaIndex).trim()
+    sentimentStr = line.substring(lastCommaIndex + 1).trim()
+    
+    // 4. 去除文本两端的引号
+    IF text 以引号开始和结束 THEN
+        text = 去除首尾引号
+    END IF
+    
+    // 5. 解析情感标签
+    TRY:
+        sentiment = 将 sentimentStr 转为整数
+    CATCH NumberFormatException:
+        RETURN  // 解析失败，跳过
+    END TRY
+    
+    // 6. 只处理正面(1)和负面(-1)新闻
+    IF sentiment != 1 AND sentiment != -1 THEN
+        RETURN
+    END IF
+    
+    // 7. 文本预处理
+    text = 转为小写
+    text = 移除所有非字母字符（替换为空格）
+    text = 将多个空格替换为单个空格并去除首尾空格
+    
+    // 8. 分词并输出
+    words = 按空格分割 text
+    
+    FOR EACH word IN words DO
+        word = 去除首尾空格
+        
+        // 过滤条件：非空、不在停词表、不是纯数字
+        IF word 非空 AND word 不在 stopWords AND word 不是数字 THEN
+            // 创建复合键：情感_单词
+            compositeKey = sentiment + "_" + word
+            输出 <compositeKey, 1> 到 context
+        END IF
+    END FOR
+END FUNCTION
+```
+
+------
+
+##### 三、Reducer 阶段
+
+###### 3.1 聚合阶段（reduce）
+
+```
+FUNCTION reduce(key, values, context):
+    // 1. 解析复合键
+    keyStr = key.toString()
+    parts = 按 "_" 分割 keyStr（最多分割成2部分）
+    
+    IF parts.length != 2 THEN
+        RETURN  // 格式错误，跳过
+    END IF
+    
+    sentiment = 将 parts[0] 转为整数
+    word = parts[1]
+    
+    // 2. 累加词频
+    sum = 0
+    FOR EACH val IN values DO
+        sum = sum + val.get()
+    END FOR
+    
+    // 3. 根据情感标签分类存储
+    IF sentiment == 1 THEN
+        将 <word, sum> 存入 positiveWordCount 映射
+    ELSE IF sentiment == -1 THEN
+        将 <word, sum> 存入 negativeWordCount 映射
+    END IF
+END FUNCTION
+```
+
+###### 3.2 清理阶段（cleanup）
+
+```
+FUNCTION cleanup(context):
+    // 1. 输出正面新闻词频 TOP 100
+    输出标题 "========== POSITIVE NEWS TOP 100 WORDS =========="
+    
+    // 按词频降序排序
+    positiveList = positiveWordCount 转为列表
+    按 value 降序排序 positiveList
+    
+    count = 0
+    FOR EACH entry IN positiveList DO
+        IF count >= 100 THEN
+            BREAK
+        END IF
+        输出 <entry.key, entry.value>
+        count = count + 1
+    END FOR
+    
+    // 2. 输出空行分隔
+    输出空行
+    
+    // 3. 输出负面新闻词频 TOP 100
+    输出标题 "========== NEGATIVE NEWS TOP 100 WORDS =========="
+    
+    // 按词频降序排序
+    negativeList = negativeWordCount 转为列表
+    按 value 降序排序 negativeList
+    
+    count = 0
+    FOR EACH entry IN negativeList DO
+        IF count >= 100 THEN
+            BREAK
+        END IF
+        输出 <entry.key, entry.value>
+        count = count + 1
+    END FOR
+END FUNCTION
+```
+
+------
+
+##### 四、数据流示例
+
+```
+输入CSV行：
+"Apple stock soars to new heights, investors optimistic",1
+
+↓ Mapper处理 ↓
+
+1. 解析：text = "Apple stock soars to new heights, investors optimistic"
+        sentiment = 1
+2. 预处理：text = "apple stock soars to new heights investors optimistic"
+3. 分词：["apple", "stock", "soars", "to", "new", "heights", "investors", "optimistic"]
+4. 过滤停词：["apple", "stock", "soars", "heights", "investors", "optimistic"]
+5. 输出键值对：
+   <"1_apple", 1>
+   <"1_stock", 1>
+   <"1_soars", 1>
+   <"1_heights", 1>
+   <"1_investors", 1>
+   <"1_optimistic", 1>
+
+↓ Shuffle & Sort ↓
+
+相同键的值聚合在一起
+
+↓ Reducer处理 ↓
+
+对每个单词累加出现次数，分类存储到正面/负面词频映射
+
+↓ Cleanup输出 ↓
+
+按词频降序输出TOP 100单词
+```
+
+----
+
+
+
+#### 编写java代码
+
+##### **Map阶段设计**
 
 Map阶段的核心任务是读取CSV数据并进行文本预处理：
 
@@ -59,7 +304,7 @@ Map(key: LongWritable, value: Text):
 2. **停用词过滤**：在setup()阶段通过分布式缓存加载停用词表
 3. **文本清洗**：正则表达式`[^a-z\\s]`保留字母和空格，去除所有标点和数字
 
-#### **Reduce阶段设计**
+##### **Reduce阶段设计**
 
 Reduce阶段负责词频统计和TOP 100筛选：
 
